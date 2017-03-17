@@ -10,10 +10,9 @@ Unity 5.0+
 
 #### INSTRUCTIONS
 - copy Assets/* to your project
-- disable MSAA under 'Project Settings/Quality'
+- disable MSAA under 'Project Settings/Quality' (optional)
 - add the TemporalReprojection component to your cameras
 - add the VelocityBufferTag component to individual moving meshes (if you want correct motion vectors)
-- for skinned meshes: tick the skinned mesh option in the tag
 - tagging skinned meshes is expensive
 
 #### AUTHOR
