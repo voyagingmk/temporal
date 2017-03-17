@@ -73,54 +73,70 @@ public static class Matrix4x4Extension
         m[3, 0] = 0; m[3, 1] = 0; m[3, 2] = e; m[3, 3] = 0;
         return m;
     }
+
+    public static Matrix4x4 GetOrthographicProjection(float left, float right, float bottom, float top, float near, float far)
+    {
+        float x = 2.0f / (right - left);
+        float y = 2.0f / (top - bottom);
+        float z = -2.0f / (far - near);
+        float a = -(right + left) / (right - left);
+        float b = -(top + bottom) / (top - bottom);
+        float c = -(far + near) / (far - near);
+        float d = 1.0f;
+
+        Matrix4x4 m = new Matrix4x4();
+        m[0, 0] = x; m[0, 1] = 0; m[0, 2] = 0; m[0, 3] = a;
+        m[1, 0] = 0; m[1, 1] = y; m[1, 2] = 0; m[1, 3] = b;
+        m[2, 0] = 0; m[2, 1] = 0; m[2, 2] = z; m[2, 3] = c;
+        m[3, 0] = 0; m[3, 1] = 0; m[3, 2] = 0; m[3, 3] = d;
+        return m;
+    }
 }
 
 public static class CameraExtension
 {
-    public static Matrix4x4 GetPerspectiveProjection(this Camera camera)
+    public static Vector4 GetProjectionExtents(this Camera camera)
     {
-        return GetPerspectiveProjection(camera, 0f, 0f);
+        return GetProjectionExtents(camera, 0f, 0f);
     }
 
-    public static Matrix4x4 GetPerspectiveProjection(this Camera camera, float texelOffsetX, float texelOffsetY)
-    {
-        if (camera == null)
-            return Matrix4x4.identity;
-
-        float oneExtentY = Mathf.Tan(0.5f * Mathf.Deg2Rad * camera.fieldOfView);
-        float oneExtentX = oneExtentY * camera.aspect;
-        float texelSizeX = oneExtentX / (0.5f * camera.pixelWidth);
-        float texelSizeY = oneExtentY / (0.5f * camera.pixelHeight);
-        float oneJitterX = texelSizeX * texelOffsetX;
-        float oneJitterY = texelSizeY * texelOffsetY;
-
-        float cf = camera.farClipPlane;
-        float cn = camera.nearClipPlane;
-        float xm = (oneJitterX - oneExtentX) * cn;
-        float xp = (oneJitterX + oneExtentX) * cn;
-        float ym = (oneJitterY - oneExtentY) * cn;
-        float yp = (oneJitterY + oneExtentY) * cn;
-
-        return Matrix4x4Extension.GetPerspectiveProjection(xm, xp, ym, yp, cn, cf);
-    }
-
-    public static Vector4 GetPerspectiveProjectionCornerRay(this Camera camera)
-    {
-        return GetPerspectiveProjectionCornerRay(camera, 0f, 0f);
-    }
-
-    public static Vector4 GetPerspectiveProjectionCornerRay(this Camera camera, float texelOffsetX, float texelOffsetY)
+    public static Vector4 GetProjectionExtents(this Camera camera, float texelOffsetX, float texelOffsetY)
     {
         if (camera == null)
             return Vector4.zero;
 
-        float oneExtentY = Mathf.Tan(0.5f * Mathf.Deg2Rad * camera.fieldOfView);
+        float oneExtentY = camera.orthographic ? camera.orthographicSize : Mathf.Tan(0.5f * Mathf.Deg2Rad * camera.fieldOfView);
         float oneExtentX = oneExtentY * camera.aspect;
         float texelSizeX = oneExtentX / (0.5f * camera.pixelWidth);
         float texelSizeY = oneExtentY / (0.5f * camera.pixelHeight);
         float oneJitterX = texelSizeX * texelOffsetX;
         float oneJitterY = texelSizeY * texelOffsetY;
 
-        return new Vector4(oneExtentX, oneExtentY, oneJitterX, oneJitterY);
+        return new Vector4(oneExtentX, oneExtentY, oneJitterX, oneJitterY);// xy = frustum extents at distance 1, zw = jitter at distance 1
+    }
+
+    public static Matrix4x4 GetProjectionMatrix(this Camera camera)
+    {
+        return GetProjectionMatrix(camera, 0f, 0f);
+    }
+
+    public static Matrix4x4 GetProjectionMatrix(this Camera camera, float texelOffsetX, float texelOffsetY)
+    {
+        if (camera == null)
+            return Matrix4x4.identity;
+
+        Vector4 extents = GetProjectionExtents(camera, texelOffsetX, texelOffsetY);
+
+        float cf = camera.farClipPlane;
+        float cn = camera.nearClipPlane;
+        float xm = extents.z - extents.x;
+        float xp = extents.z + extents.x;
+        float ym = extents.w - extents.y;
+        float yp = extents.w + extents.y;
+
+        if (camera.orthographic)
+            return Matrix4x4Extension.GetOrthographicProjection(xm, xp, ym, yp, cn, cf);
+        else
+            return Matrix4x4Extension.GetPerspectiveProjection(xm * cn, xp * cn, ym * cn, yp * cn, cn, cf);
     }
 }

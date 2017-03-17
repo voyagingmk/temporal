@@ -16,15 +16,13 @@ public class VelocityBuffer : EffectBase
     private const RenderTextureFormat velocityFormat = RenderTextureFormat.RGFloat;
 #endif
 
+    private Camera _camera;
+
     public Shader velocityShader;
     private Material velocityMaterial;
     private Matrix4x4? velocityViewMatrix;
-
-    [HideInInspector, NonSerialized] public RenderTexture velocityBuffer;
-    [HideInInspector, NonSerialized] public RenderTexture velocityNeighborMax;
-
-    private float timeScaleNextFrame;
-    public float timeScale { get; private set; }
+    [NonSerialized, HideInInspector] public RenderTexture velocityBuffer;
+    [NonSerialized, HideInInspector] public RenderTexture velocityNeighborMax;
 
     public enum NeighborMaxSupport
     {
@@ -36,6 +34,9 @@ public class VelocityBuffer : EffectBase
     public bool neighborMaxGen = false;
     public NeighborMaxSupport neighborMaxSupport = NeighborMaxSupport.TileSize20;
 
+    private float timeScaleNextFrame;
+    public float timeScale { get; private set; }
+
 #if UNITY_EDITOR
     [Header("Stats")]
     public int numResident = 0;
@@ -43,11 +44,20 @@ public class VelocityBuffer : EffectBase
     public int numDrawCalls = 0;
 #endif
 
-    private Camera _camera;
+    void Reset()
+    {
+        _camera = GetComponent<Camera>();
+    }
+
+    void Clear()
+    {
+        velocityViewMatrix = null;
+    }
 
     void Awake()
     {
-        _camera = GetComponent<Camera>();
+        Reset();
+        Clear();
     }
 
     void Start()
@@ -55,16 +65,17 @@ public class VelocityBuffer : EffectBase
         timeScaleNextFrame = Time.timeScale;
     }
 
+    void OnPreRender()
+    {
+        EnsureDepthTexture(_camera);
+    }
+
     void OnPostRender()
     {
         EnsureMaterial(ref velocityMaterial, velocityShader);
 
-        if (_camera.orthographic || _camera.depthTextureMode == DepthTextureMode.None || velocityMaterial == null)
-        {
-            if (_camera.depthTextureMode == DepthTextureMode.None)
-                _camera.depthTextureMode = DepthTextureMode.Depth;
+        if (velocityMaterial == null)
             return;
-        }
 
         timeScale = timeScaleNextFrame;
         timeScaleNextFrame = (Time.timeScale == 0f) ? timeScaleNextFrame : Time.timeScale;
@@ -72,13 +83,18 @@ public class VelocityBuffer : EffectBase
         int bufferW = _camera.pixelWidth;
         int bufferH = _camera.pixelHeight;
 
-        EnsureRenderTarget(ref velocityBuffer, bufferW, bufferH, velocityFormat, FilterMode.Point, 16);
+        if (EnsureRenderTarget(ref velocityBuffer, bufferW, bufferH, velocityFormat, FilterMode.Point, depthBits: 16))
+            Clear();
+
+        EnsureKeyword(velocityMaterial, "CAMERA_PERSPECTIVE", !_camera.orthographic);
+        EnsureKeyword(velocityMaterial, "CAMERA_ORTHOGRAPHIC", _camera.orthographic);
 
         EnsureKeyword(velocityMaterial, "TILESIZE_10", neighborMaxSupport == NeighborMaxSupport.TileSize10);
         EnsureKeyword(velocityMaterial, "TILESIZE_20", neighborMaxSupport == NeighborMaxSupport.TileSize20);
         EnsureKeyword(velocityMaterial, "TILESIZE_40", neighborMaxSupport == NeighborMaxSupport.TileSize40);
 
-        Matrix4x4 cameraP = _camera.projectionMatrix;
+        Matrix4x4 cameraP = GL.GetGPUProjectionMatrix(_camera.projectionMatrix, true);
+        Matrix4x4 cameraP_NoFlip = GL.GetGPUProjectionMatrix(_camera.projectionMatrix, false);
         Matrix4x4 cameraV = _camera.worldToCameraMatrix;
         Matrix4x4 cameraVP = cameraP * cameraV;
 
@@ -99,15 +115,16 @@ public class VelocityBuffer : EffectBase
             // 0: prepass
             var jitter = GetComponent<FrustumJitter>();
             if (jitter != null)
-                velocityMaterial.SetVector("_Corner", _camera.GetPerspectiveProjectionCornerRay(jitter.activeSample.x, jitter.activeSample.y));
+                velocityMaterial.SetVector("_ProjectionExtents", _camera.GetProjectionExtents(jitter.activeSample.x, jitter.activeSample.y));
             else
-                velocityMaterial.SetVector("_Corner", _camera.GetPerspectiveProjectionCornerRay());
+                velocityMaterial.SetVector("_ProjectionExtents", _camera.GetProjectionExtents());
 
             velocityMaterial.SetMatrix("_CurrV", cameraV);
             velocityMaterial.SetMatrix("_CurrVP", cameraVP);
             velocityMaterial.SetMatrix("_PrevVP", cameraP * velocityViewMatrix.Value);
+            velocityMaterial.SetMatrix("_PrevVP_NoFlip", cameraP_NoFlip * velocityViewMatrix.Value);
             velocityMaterial.SetPass(kPrepass);
-            FullScreenQuad();
+            DrawFullscreenQuad();
 
             // 1 + 2: vertices + vertices skinned
             var obs = VelocityBufferTag.activeObjects;
@@ -119,11 +136,11 @@ public class VelocityBuffer : EffectBase
             for (int i = 0, n = obs.Count; i != n; i++)
             {
                 var ob = obs[i];
-                if (ob != null && ob.sleeping == false && ob.mesh != null)
+                if (ob != null && ob.rendering && ob.mesh != null)
                 {
                     velocityMaterial.SetMatrix("_CurrM", ob.localToWorldCurr);
                     velocityMaterial.SetMatrix("_PrevM", ob.localToWorldPrev);
-                    velocityMaterial.SetPass(ob.useSkinnedMesh ? kVerticesSkinned : kVertices);
+                    velocityMaterial.SetPass(ob.meshSmrActive ? kVerticesSkinned : kVertices);
 
                     for (int j = 0; j != ob.mesh.subMeshCount; j++)
                     {
@@ -153,7 +170,7 @@ public class VelocityBuffer : EffectBase
                 int neighborMaxW = bufferW / tileSize;
                 int neighborMaxH = bufferH / tileSize;
 
-                EnsureRenderTarget(ref velocityNeighborMax, neighborMaxW, neighborMaxH, velocityFormat, FilterMode.Bilinear, 0);
+                EnsureRenderTarget(ref velocityNeighborMax, neighborMaxW, neighborMaxH, velocityFormat, FilterMode.Bilinear);
 
                 // tilemax
                 RenderTexture tileMax = RenderTexture.GetTemporary(neighborMaxW, neighborMaxH, 0, velocityFormat);
@@ -162,7 +179,7 @@ public class VelocityBuffer : EffectBase
                     velocityMaterial.SetTexture("_VelocityTex", velocityBuffer);
                     velocityMaterial.SetVector("_VelocityTex_TexelSize", new Vector4(1f / bufferW, 1f / bufferH, 0f, 0f));
                     velocityMaterial.SetPass(kTileMax);
-                    FullScreenQuad();
+                    DrawFullscreenQuad();
                 }
 
                 // neighbormax
@@ -171,7 +188,7 @@ public class VelocityBuffer : EffectBase
                     velocityMaterial.SetTexture("_VelocityTex", tileMax);
                     velocityMaterial.SetVector("_VelocityTex_TexelSize", new Vector4(1f / neighborMaxW, 1f / neighborMaxH, 0f, 0f));
                     velocityMaterial.SetPass(kNeighborMax);
-                    FullScreenQuad();
+                    DrawFullscreenQuad();
                 }
 
                 RenderTexture.ReleaseTemporary(tileMax);
@@ -185,5 +202,11 @@ public class VelocityBuffer : EffectBase
         RenderTexture.active = activeRT;
 
         velocityViewMatrix = cameraV;
+    }
+
+    void OnApplicationQuit()
+    {
+        ReleaseRenderTarget(ref velocityBuffer);
+        ReleaseRenderTarget(ref velocityNeighborMax);
     }
 }

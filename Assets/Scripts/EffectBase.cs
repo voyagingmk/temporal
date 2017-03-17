@@ -21,6 +21,12 @@ public abstract class EffectBase : MonoBehaviour
         }
     }
 
+    public void EnsureDepthTexture(Camera camera)
+    {
+        if ((camera.depthTextureMode & DepthTextureMode.Depth) == 0)
+            camera.depthTextureMode |= DepthTextureMode.Depth;
+    }
+
     public void EnsureKeyword(Material material, string name, bool enabled)
     {
         if (enabled != material.IsKeywordEnabled(name))
@@ -32,39 +38,50 @@ public abstract class EffectBase : MonoBehaviour
         }
     }
 
-    public void EnsureRenderTarget(ref RenderTexture rt, int width, int height, RenderTextureFormat format, FilterMode filterMode, int depthBits = 0)
+    public bool EnsureRenderTarget(ref RenderTexture rt, int width, int height, RenderTextureFormat format, FilterMode filterMode, int depthBits = 0, int antiAliasing = 1)
     {
-        if (rt != null && (rt.width != width || rt.height != height || rt.format != format || rt.filterMode != filterMode))
+        if (rt != null && (rt.width != width || rt.height != height || rt.format != format || rt.filterMode != filterMode || rt.antiAliasing != antiAliasing))
         {
             RenderTexture.ReleaseTemporary(rt);
             rt = null;
         }
         if (rt == null)
         {
-            rt = RenderTexture.GetTemporary(width, height, depthBits, format);
+            rt = RenderTexture.GetTemporary(width, height, depthBits, format, RenderTextureReadWrite.Default, antiAliasing);
             rt.filterMode = filterMode;
             rt.wrapMode = TextureWrapMode.Clamp;
+            return true;// new target
+        }
+        return false;// same target
+    }
+
+    public void ReleaseRenderTarget(ref RenderTexture rt)
+    {
+        if (rt != null)
+        {
+            RenderTexture.ReleaseTemporary(rt);
+            rt = null;
         }
     }
 
-    public void FullScreenQuad()
+    public void DrawFullscreenQuad()
     {
         GL.PushMatrix();
         GL.LoadOrtho();
-
         GL.Begin(GL.QUADS);
-        GL.MultiTexCoord2(0, 0.0f, 0.0f);
-        GL.Vertex3(0.0f, 0.0f, 0.0f); // BL
+        {
+            GL.MultiTexCoord2(0, 0.0f, 0.0f);
+            GL.Vertex3(0.0f, 0.0f, 0.0f); // BL
 
-        GL.MultiTexCoord2(0, 1.0f, 0.0f);
-        GL.Vertex3(1.0f, 0.0f, 0.0f); // BR
+            GL.MultiTexCoord2(0, 1.0f, 0.0f);
+            GL.Vertex3(1.0f, 0.0f, 0.0f); // BR
 
-        GL.MultiTexCoord2(0, 1.0f, 1.0f);
-        GL.Vertex3(1.0f, 1.0f, 0.0f); // TR
+            GL.MultiTexCoord2(0, 1.0f, 1.0f);
+            GL.Vertex3(1.0f, 1.0f, 0.0f); // TR
 
-        GL.MultiTexCoord2(0, 0.0f, 1.0f);
-        GL.Vertex3(0.0f, 1.0f, 0.0f); // TL
-
+            GL.MultiTexCoord2(0, 0.0f, 1.0f);
+            GL.Vertex3(0.0f, 1.0f, 0.0f); // TL
+        }
         GL.End();
         GL.PopMatrix();
     }

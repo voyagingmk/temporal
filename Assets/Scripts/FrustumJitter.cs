@@ -10,7 +10,7 @@ using UnityEngine;
 [AddComponentMenu("Playdead/FrustumJitter")]
 public class FrustumJitter : MonoBehaviour
 {
-    #region Point distributions
+    #region Static point data
     private static float[] points_Still = new float[] {
          0.5f, 0.5f,
     };
@@ -91,7 +91,9 @@ public class FrustumJitter : MonoBehaviour
          0.00f, -0.25f,
          0.00f,  0.25f,
     };
+    #endregion
 
+    #region Static point data, static initialization
     private static void TransformPattern(float[] seq, float theta, float scale)
     {
         float cs = Mathf.Cos(theta);
@@ -131,26 +133,22 @@ public class FrustumJitter : MonoBehaviour
         }
     }
 
-    static bool _initialized = false;
     static FrustumJitter()
     {
-        if (_initialized == false)
-        {
-            _initialized = true;
+        // points_Pentagram
+        Vector2 vh = new Vector2(points_Pentagram[0] - points_Pentagram[2], points_Pentagram[1] - points_Pentagram[3]);
+        Vector2 vu = new Vector2(0.0f, 1.0f);
+        TransformPattern(points_Pentagram, Mathf.Deg2Rad * (0.5f * Vector2.Angle(vu, vh)), 1.0f);
 
-            // points_Pentagram
-            Vector2 vh = new Vector2(points_Pentagram[0] - points_Pentagram[2], points_Pentagram[1] - points_Pentagram[3]);
-            Vector2 vu = new Vector2(0.0f, 1.0f);
-            TransformPattern(points_Pentagram, Mathf.Deg2Rad * (0.5f * Vector2.Angle(vu, vh)), 1.0f);
-
-            // points_Halton_2_3_xN
-            InitializeHalton_2_3(points_Halton_2_3_x8);
-            InitializeHalton_2_3(points_Halton_2_3_x16);
-            InitializeHalton_2_3(points_Halton_2_3_x32);
-            InitializeHalton_2_3(points_Halton_2_3_x256);
-        }
+        // points_Halton_2_3_xN
+        InitializeHalton_2_3(points_Halton_2_3_x8);
+        InitializeHalton_2_3(points_Halton_2_3_x16);
+        InitializeHalton_2_3(points_Halton_2_3_x32);
+        InitializeHalton_2_3(points_Halton_2_3_x256);
     }
+    #endregion
 
+    #region Static point data accessors
     public enum Pattern
     {
         Still,
@@ -217,16 +215,6 @@ public class FrustumJitter : MonoBehaviour
     {
         return AccessPointData(pattern).Length / 2;
     }
-    #endregion
-
-    private Vector3 focalMotionPos = Vector3.zero;
-    private Vector3 focalMotionDir = Vector3.right;
-
-    public Pattern pattern = Pattern.Halton_2_3_X16;
-    public float patternScale = 1f;
-
-    public Vector4 activeSample = Vector4.zero;// xy = current sample, zw = previous sample
-    public int activeIndex = -1;
 
     public Vector2 Sample(Pattern pattern, int index)
     {
@@ -242,64 +230,87 @@ public class FrustumJitter : MonoBehaviour
         else
             return new Vector2(x, y).Rotate(Vector2.right.SignedAngle(focalMotionDir));
     }
+    #endregion
+
+    private Camera _camera;
+
+    private Vector3 focalMotionPos = Vector3.zero;
+    private Vector3 focalMotionDir = Vector3.right;
+
+    public Pattern pattern = Pattern.Halton_2_3_X16;
+    public float patternScale = 1f;
+
+    public Vector4 activeSample = Vector4.zero;// xy = current sample, zw = previous sample
+    public int activeIndex = -2;
+
+    void Reset()
+    {
+        _camera = GetComponent<Camera>();
+    }
+
+    void Clear()
+    {
+        _camera.ResetProjectionMatrix();
+
+        activeSample = Vector4.zero;
+        activeIndex = -2;
+    }
+
+    void Awake()
+    {
+        Reset();
+        Clear();
+    }
 
     void OnPreCull()
     {
-        var camera = GetComponent<Camera>();
-        if (camera != null && camera.orthographic == false)
+        // update motion dir
         {
-            // update motion dir
+            Vector3 oldWorld = focalMotionPos;
+            Vector3 newWorld = _camera.transform.TransformVector(_camera.nearClipPlane * Vector3.forward);
+
+            Vector3 oldPoint = (_camera.worldToCameraMatrix * oldWorld);
+            Vector3 newPoint = (_camera.worldToCameraMatrix * newWorld);
+            Vector3 newDelta = (newPoint - oldPoint).WithZ(0f);
+
+            var mag = newDelta.magnitude;
+            if (mag != 0f)
             {
-                Vector3 oldWorld = focalMotionPos;
-                Vector3 newWorld = camera.transform.TransformVector(camera.nearClipPlane * Vector3.forward);
-
-                Vector3 oldPoint = (camera.worldToCameraMatrix * oldWorld);
-                Vector3 newPoint = (camera.worldToCameraMatrix * newWorld);
-                Vector3 newDelta = (newPoint - oldPoint).WithZ(0f);
-
-                var mag = newDelta.magnitude;
-                if (mag != 0f)
+                var dir = newDelta / mag;// yes, apparently this is necessary instead of newDelta.normalized... because facepalm
+                if (dir.sqrMagnitude != 0f)
                 {
-                    var dir = newDelta / mag;// yes, apparently this is necessary instead of newDelta.normalized... because facepalm
-                    if (dir.sqrMagnitude != 0f)
-                    {
-                        focalMotionPos = newWorld;
-                        focalMotionDir = Vector3.Slerp(focalMotionDir, dir, 0.2f);
-                        //Debug.Log("CHANGE focalMotionDir " + focalMotionDir.ToString("G4") + " delta was " + newDelta.ToString("G4") + " delta.mag " + newDelta.magnitude);
-                    }
+                    focalMotionPos = newWorld;
+                    focalMotionDir = Vector3.Slerp(focalMotionDir, dir, 0.2f);
+                    //Debug.Log("CHANGE focalMotionDir " + focalMotionDir.ToString("G4") + " delta was " + newDelta.ToString("G4") + " delta.mag " + newDelta.magnitude);
                 }
             }
+        }
 
-            // update jitter
-            {
-                activeIndex += 1;
-                activeIndex %= AccessLength(pattern);
+        // update jitter
+        if (activeIndex == -2)
+        {
+            activeSample = Vector4.zero;
+            activeIndex += 1;
 
-                Vector2 sample = Sample(pattern, activeIndex);
-                activeSample.z = activeSample.x;
-                activeSample.w = activeSample.y;
-                activeSample.x = sample.x;
-                activeSample.y = sample.y;
-
-                camera.projectionMatrix = camera.GetPerspectiveProjection(sample.x, sample.y);
-            }
+            _camera.projectionMatrix = _camera.GetProjectionMatrix();
         }
         else
         {
-            activeSample = Vector4.zero;
-            activeIndex = -1;
+            activeIndex += 1;
+            activeIndex %= AccessLength(pattern);
+
+            Vector2 sample = Sample(pattern, activeIndex);
+            activeSample.z = activeSample.x;
+            activeSample.w = activeSample.y;
+            activeSample.x = sample.x;
+            activeSample.y = sample.y;
+
+            _camera.projectionMatrix = _camera.GetProjectionMatrix(sample.x, sample.y);
         }
     }
 
     void OnDisable()
     {
-        var camera = GetComponent<Camera>();
-        if (camera != null)
-        {
-            camera.ResetProjectionMatrix();
-        }
-
-        activeSample = Vector4.zero;
-        activeIndex = -1;
+        Clear();
     }
 }
