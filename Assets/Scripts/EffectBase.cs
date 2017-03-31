@@ -6,6 +6,29 @@ using UnityEngine;
 
 public abstract class EffectBase : MonoBehaviour
 {
+    public void EnsureArray<T>(ref T[] array, int size, T initialValue = default(T))
+    {
+        if (array == null || array.Length != size)
+        {
+            array = new T[size];
+            for (int i = 0; i != size; i++)
+                array[i] = initialValue;
+        }
+    }
+
+    public void EnsureArray<T>(ref T[,] array, int size0, int size1, T defaultValue = default(T))
+    {
+        if (array == null || array.Length != size0 * size1)
+        {
+            array = new T[size0, size1];
+            for (int i = 0; i != size0; i++)
+            {
+                for (int j = 0; j != size1; j++)
+                    array[i, j] = defaultValue;
+            }
+        }
+    }
+
     public void EnsureMaterial(ref Material material, Shader shader)
     {
         if (shader != null)

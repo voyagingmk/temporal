@@ -12,6 +12,9 @@ Shader "Playdead/Post/TemporalReprojection"
 	CGINCLUDE
 	//--- program begin
 	
+	#pragma only_renderers ps4 xboxone d3d11 d3d9 xbox360 opengl glcore gles3 metal vulkan
+	#pragma target 3.0
+
 	#pragma multi_compile CAMERA_PERSPECTIVE CAMERA_ORTHOGRAPHIC
 	#pragma multi_compile MINMAX_3X3 MINMAX_3X3_ROUNDED MINMAX_4TAP_VARYING
 	#pragma multi_compile __ UNJITTER_COLORSAMPLES
@@ -62,8 +65,12 @@ Shader "Playdead/Post/TemporalReprojection"
 	#else
 		OUT.cs_pos = UnityObjectToClipPos(IN.vertex);
 	#endif
+	#if UNITY_SINGLE_PASS_STEREO
+		OUT.ss_txc = UnityStereoTransformScreenSpaceTex(IN.texcoord.xy);
+	#else
 		OUT.ss_txc = IN.texcoord.xy;
-		
+	#endif
+
 		return OUT;
 	}
 
@@ -404,9 +411,7 @@ Shader "Playdead/Post/TemporalReprojection"
 
 			#pragma vertex vert
 			#pragma fragment frag
-			#pragma only_renderers ps4 xboxone d3d11 d3d9 xbox360 opengl glcore gles3 metal vulkan
-			#pragma target 3.0
-			
+
 			ENDCG
 		}
 	}

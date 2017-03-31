@@ -2,6 +2,10 @@
 // This file is subject to the MIT License as seen in the root of this folder structure (LICENSE.TXT)
 // AUTHOR: Lasse Jon Fuglsang Pedersen <lasse@playdead.com>
 
+#if UNITY_5_5_OR_NEWER
+#define SUPPORT_STEREO
+#endif
+
 using UnityEngine;
 
 public static class Vector2Extension
@@ -20,7 +24,7 @@ public static class Vector2Extension
         
         float theta = Mathf.Acos(dot);
         float sgn = Vector2.Dot(new Vector2(-n1.y, n1.x), n2);
-        if (sgn >= 0f)
+        if (sgn >= 0.0f)
             return theta;
         else
             return -theta;
@@ -97,7 +101,7 @@ public static class CameraExtension
 {
     public static Vector4 GetProjectionExtents(this Camera camera)
     {
-        return GetProjectionExtents(camera, 0f, 0f);
+        return GetProjectionExtents(camera, 0.0f, 0.0f);
     }
 
     public static Vector4 GetProjectionExtents(this Camera camera, float texelOffsetX, float texelOffsetY)
@@ -115,9 +119,35 @@ public static class CameraExtension
         return new Vector4(oneExtentX, oneExtentY, oneJitterX, oneJitterY);// xy = frustum extents at distance 1, zw = jitter at distance 1
     }
 
+#if SUPPORT_STEREO
+    public static Vector4 GetProjectionExtents(this Camera camera, Camera.StereoscopicEye eye)
+    {
+        return GetProjectionExtents(camera, eye, 0.0f, 0.0f);
+    }
+
+    public static Vector4 GetProjectionExtents(this Camera camera, Camera.StereoscopicEye eye, float texelOffsetX, float texelOffsetY)
+    {
+        Matrix4x4 inv = Matrix4x4.Inverse(camera.GetStereoProjectionMatrix(eye));
+        Vector3 ray00 = inv.MultiplyPoint3x4(new Vector3(-1.0f, -1.0f, 0.95f));
+        Vector3 ray11 = inv.MultiplyPoint3x4(new Vector3(1.0f, 1.0f, 0.95f));
+
+        ray00 /= -ray00.z;
+        ray11 /= -ray11.z;
+
+        float oneExtentX = 0.5f * (ray11.x - ray00.x);
+        float oneExtentY = 0.5f * (ray11.y - ray00.y);
+        float texelSizeX = oneExtentX / (0.5f * camera.pixelWidth);
+        float texelSizeY = oneExtentY / (0.5f * camera.pixelHeight);
+        float oneJitterX = 0.5f * (ray11.x + ray00.x) + texelSizeX * texelOffsetX;
+        float oneJitterY = 0.5f * (ray11.y + ray00.y) + texelSizeY * texelOffsetY;
+
+        return new Vector4(oneExtentX, oneExtentY, oneJitterX, oneJitterY);// xy = frustum extents at distance 1, zw = jitter at distance 1
+    }
+#endif
+
     public static Matrix4x4 GetProjectionMatrix(this Camera camera)
     {
-        return GetProjectionMatrix(camera, 0f, 0f);
+        return GetProjectionMatrix(camera, 0.0f, 0.0f);
     }
 
     public static Matrix4x4 GetProjectionMatrix(this Camera camera, float texelOffsetX, float texelOffsetY)

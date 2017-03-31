@@ -7,6 +7,9 @@ Shader "Playdead/Post/VelocityBuffer"
 	CGINCLUDE
 	//--- program begin
 
+	#pragma only_renderers ps4 xboxone d3d11 d3d9 xbox360 opengl glcore gles3 metal vulkan
+	#pragma target 3.0
+
 	#pragma multi_compile CAMERA_PERSPECTIVE CAMERA_ORTHOGRAPHIC
 	#pragma multi_compile __ TILESIZE_10 TILESIZE_20 TILESIZE_40
 
@@ -17,17 +20,25 @@ Shader "Playdead/Post/VelocityBuffer"
 	uniform float4x4 _CameraToWorld;// UNITY_SHADER_NO_UPGRADE
 #endif
 
+#if UNITY_VERSION < 550
+	#define STEREO_ARRAY
+	#define STEREO_INDEX(x) x
+#else
+	#define STEREO_ARRAY [2]
+	#define STEREO_INDEX(x) x[unity_StereoEyeIndex] 
+#endif
+
 	uniform sampler2D_half _VelocityTex;
 	uniform float4 _VelocityTex_TexelSize;
 
-	uniform float4 _ProjectionExtents;// xy = frustum extents at distance 1, zw = jitter at distance 1
+	uniform float4 _ProjectionExtents STEREO_ARRAY;// xy = frustum extents at distance 1, zw = jitter at distance 1
 
-	uniform float4x4 _CurrV;
-	uniform float4x4 _CurrVP;
+	uniform float4x4 _CurrV STEREO_ARRAY;
+	uniform float4x4 _CurrVP STEREO_ARRAY;
 	uniform float4x4 _CurrM;
 
-	uniform float4x4 _PrevVP;
-	uniform float4x4 _PrevVP_NoFlip;
+	uniform float4x4 _PrevVP STEREO_ARRAY;
+	uniform float4x4 _PrevVP_NoFlip STEREO_ARRAY;
 	uniform float4x4 _PrevM;
 
 	struct blit_v2f
@@ -46,8 +57,13 @@ Shader "Playdead/Post/VelocityBuffer"
 	#else
 		OUT.cs_pos = UnityObjectToClipPos(IN.vertex);
 	#endif
+
+	#if UNITY_SINGLE_PASS_STEREO
+		OUT.ss_txc = UnityStereoTransformScreenSpaceTex(IN.texcoord.xy);
+	#else
 		OUT.ss_txc = IN.texcoord.xy;
-		OUT.vs_ray = (2.0 * IN.texcoord.xy - 1.0) * _ProjectionExtents.xy + _ProjectionExtents.zw;
+	#endif
+		OUT.vs_ray = (2.0 * IN.texcoord.xy - 1.0) * STEREO_INDEX(_ProjectionExtents).xy + STEREO_INDEX(_ProjectionExtents).zw;
 
 		return OUT;
 	}
@@ -74,12 +90,16 @@ Shader "Playdead/Post/VelocityBuffer"
 		//return 0.1 * float4(ws_pos.xy - float2(595.0, -215.0), 0.0, 0.0);
 
 		// reproject into previous frame
-		float4 rp_cs_pos = mul(_PrevVP_NoFlip, ws_pos);
+		float4 rp_cs_pos = mul(STEREO_INDEX(_PrevVP_NoFlip), ws_pos);
 		float2 rp_ss_ndc = rp_cs_pos.xy / rp_cs_pos.w;
 		float2 rp_ss_txc = 0.5 * rp_ss_ndc + 0.5;
-		
+
 		// estimate velocity
+	#if UNITY_SINGLE_PASS_STEREO
+		float2 ss_vel = IN.ss_txc - UnityStereoTransformScreenSpaceTex(rp_ss_txc);
+	#else
 		float2 ss_vel = IN.ss_txc - rp_ss_txc;
+	#endif
 
 		// output
 		return float4(ss_vel, 0.0, 0.0);
@@ -165,11 +185,11 @@ Shader "Playdead/Post/VelocityBuffer"
 
 		const float occlusion_bias = 0.03;
 
-		OUT.cs_pos = mul(mul(_CurrVP, _CurrM), ws_pos_curr);
+		OUT.cs_pos = mul(mul(STEREO_INDEX(_CurrVP), _CurrM), ws_pos_curr);
 		OUT.ss_pos = ComputeScreenPos(OUT.cs_pos);
-		OUT.ss_pos.z = -mul(mul(_CurrV, _CurrM), ws_pos_curr).z - occlusion_bias;// COMPUTE_EYEDEPTH
+		OUT.ss_pos.z = -mul(mul(STEREO_INDEX(_CurrV), _CurrM), ws_pos_curr).z - occlusion_bias;// COMPUTE_EYEDEPTH
 		OUT.cs_xy_curr = OUT.cs_pos.xyw;
-		OUT.cs_xy_prev = mul(mul(_PrevVP, _PrevM), ws_pos_prev).xyw;
+		OUT.cs_xy_prev = mul(mul(STEREO_INDEX(_PrevVP), _PrevM), ws_pos_prev).xyw;
 
 	#if UNITY_UV_STARTS_AT_TOP
 		OUT.cs_xy_curr.y = -OUT.cs_xy_curr.y;
@@ -202,7 +222,11 @@ Shader "Playdead/Post/VelocityBuffer"
 		float2 ndc_prev = IN.cs_xy_prev.xy / IN.cs_xy_prev.z;
 
 		// compute screen space velocity [0,1;0,1]
+	#if UNITY_SINGLE_PASS_STEREO
+		return float4(0.5 * (ndc_curr - ndc_prev) * unity_StereoScaleOffset[unity_StereoEyeIndex].xy, 0.0, 0.0);
+	#else
 		return float4(0.5 * (ndc_curr - ndc_prev), 0.0, 0.0);
+	#endif
 	}
 
 	//--- program end
@@ -220,8 +244,6 @@ Shader "Playdead/Post/VelocityBuffer"
 
 			#pragma vertex blit_vert
 			#pragma fragment blit_frag_prepass
-			#pragma only_renderers ps4 xboxone d3d11 d3d9 xbox360 opengl glcore gles3 metal vulkan
-			#pragma target 3.0
 
 			ENDCG
 		}
@@ -236,8 +258,6 @@ Shader "Playdead/Post/VelocityBuffer"
 
 			#pragma vertex vert
 			#pragma fragment frag
-			#pragma only_renderers ps4 xboxone d3d11 d3d9 xbox360 opengl glcore gles3 metal vulkan
-			#pragma target 3.0
 
 			ENDCG
 		}
@@ -252,8 +272,6 @@ Shader "Playdead/Post/VelocityBuffer"
 
 			#pragma vertex vert_skinned
 			#pragma fragment frag
-			#pragma only_renderers ps4 xboxone d3d11 d3d9 xbox360 opengl glcore gles3 metal vulkan
-			#pragma target 3.0
 
 			ENDCG
 		}
@@ -268,8 +286,6 @@ Shader "Playdead/Post/VelocityBuffer"
 
 			#pragma vertex blit_vert
 			#pragma fragment blit_frag_tilemax
-			#pragma only_renderers ps4 xboxone d3d11 d3d9 xbox360 opengl glcore gles3 metal vulkan
-			#pragma target 3.0
 
 			ENDCG
 		}
@@ -284,8 +300,6 @@ Shader "Playdead/Post/VelocityBuffer"
 
 			#pragma vertex blit_vert
 			#pragma fragment blit_frag_neighbormax
-			#pragma only_renderers ps4 xboxone d3d11 d3d9 xbox360 opengl glcore gles3 metal vulkan
-			#pragma target 3.0
 
 			ENDCG
 		}

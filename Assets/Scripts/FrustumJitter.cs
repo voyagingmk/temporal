@@ -2,7 +2,10 @@
 // This file is subject to the MIT License as seen in the root of this folder structure (LICENSE.TXT)
 // AUTHOR: Lasse Jon Fuglsang Pedersen <lasse@playdead.com>
 
-using System;
+#if UNITY_5_5_OR_NEWER
+#define SUPPORT_STEREO
+#endif
+
 using UnityEngine;
 
 [ExecuteInEditMode]
@@ -110,8 +113,8 @@ public class FrustumJitter : MonoBehaviour
     // http://en.wikipedia.org/wiki/Halton_sequence
     private static float HaltonSeq(int prime, int index = 1/* NOT! zero-based */)
     {
-        float r = 0f;
-        float f = 1f;
+        float r = 0.0f;
+        float f = 1.0f;
         int i = index;
         while (i > 0)
         {
@@ -238,7 +241,7 @@ public class FrustumJitter : MonoBehaviour
     private Vector3 focalMotionDir = Vector3.right;
 
     public Pattern pattern = Pattern.Halton_2_3_X16;
-    public float patternScale = 1f;
+    public float patternScale = 1.0f;
 
     public Vector4 activeSample = Vector4.zero;// xy = current sample, zw = previous sample
     public int activeIndex = -2;
@@ -271,13 +274,13 @@ public class FrustumJitter : MonoBehaviour
 
             Vector3 oldPoint = (_camera.worldToCameraMatrix * oldWorld);
             Vector3 newPoint = (_camera.worldToCameraMatrix * newWorld);
-            Vector3 newDelta = (newPoint - oldPoint).WithZ(0f);
+            Vector3 newDelta = (newPoint - oldPoint).WithZ(0.0f);
 
             var mag = newDelta.magnitude;
-            if (mag != 0f)
+            if (mag != 0.0f)
             {
                 var dir = newDelta / mag;// yes, apparently this is necessary instead of newDelta.normalized... because facepalm
-                if (dir.sqrMagnitude != 0f)
+                if (dir.sqrMagnitude != 0.0f)
                 {
                     focalMotionPos = newWorld;
                     focalMotionDir = Vector3.Slerp(focalMotionDir, dir, 0.2f);
@@ -287,25 +290,34 @@ public class FrustumJitter : MonoBehaviour
         }
 
         // update jitter
-        if (activeIndex == -2)
+#if SUPPORT_STEREO
+        if (_camera.stereoEnabled)
         {
-            activeSample = Vector4.zero;
-            activeIndex += 1;
-
-            _camera.projectionMatrix = _camera.GetProjectionMatrix();
+            Clear();
         }
         else
+#endif
         {
-            activeIndex += 1;
-            activeIndex %= AccessLength(pattern);
+            if (activeIndex == -2)
+            {
+                activeSample = Vector4.zero;
+                activeIndex += 1;
 
-            Vector2 sample = Sample(pattern, activeIndex);
-            activeSample.z = activeSample.x;
-            activeSample.w = activeSample.y;
-            activeSample.x = sample.x;
-            activeSample.y = sample.y;
+                _camera.projectionMatrix = _camera.GetProjectionMatrix();
+            }
+            else
+            {
+                activeIndex += 1;
+                activeIndex %= AccessLength(pattern);
 
-            _camera.projectionMatrix = _camera.GetProjectionMatrix(sample.x, sample.y);
+                Vector2 sample = Sample(pattern, activeIndex);
+                activeSample.z = activeSample.x;
+                activeSample.w = activeSample.y;
+                activeSample.x = sample.x;
+                activeSample.y = sample.y;
+
+                _camera.projectionMatrix = _camera.GetProjectionMatrix(sample.x, sample.y);
+            }
         }
     }
 

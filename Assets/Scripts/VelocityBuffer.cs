@@ -2,11 +2,14 @@
 // This file is subject to the MIT License as seen in the root of this folder structure (LICENSE.TXT)
 // AUTHOR: Lasse Jon Fuglsang Pedersen <lasse@playdead.com>
 
-using System;
+#if UNITY_5_5_OR_NEWER
+#define SUPPORT_STEREO
+#endif
+
 using UnityEngine;
 
 [ExecuteInEditMode]
-[RequireComponent(typeof(Camera))]
+[RequireComponent(typeof(Camera), typeof(FrustumJitter))]
 [AddComponentMenu("Playdead/VelocityBuffer")]
 public class VelocityBuffer : EffectBase
 {
@@ -17,12 +20,23 @@ public class VelocityBuffer : EffectBase
 #endif
 
     private Camera _camera;
+    private FrustumJitter _frustumJitter;
 
     public Shader velocityShader;
     private Material velocityMaterial;
-    private Matrix4x4? velocityViewMatrix;
-    [NonSerialized, HideInInspector] public RenderTexture velocityBuffer;
-    [NonSerialized, HideInInspector] public RenderTexture velocityNeighborMax;
+    private RenderTexture[] velocityBuffer;
+    private RenderTexture[] velocityNeighborMax;
+
+    private bool[] paramInitialized;
+    private Vector4[] paramProjectionExtents;
+    private Matrix4x4[] paramCurrV;
+    private Matrix4x4[] paramCurrVP;
+    private Matrix4x4[] paramPrevVP;
+    private Matrix4x4[] paramPrevVP_NoFlip;
+
+    private int activeEyeIndex = -1;
+    public RenderTexture activeVelocityBuffer { get { return (activeEyeIndex != -1) ? velocityBuffer[activeEyeIndex] : null; } }
+    public RenderTexture activeVelocityNeighborMax { get { return (activeEyeIndex != -1) ? velocityNeighborMax[activeEyeIndex] : null; } }
 
     public enum NeighborMaxSupport
     {
@@ -47,11 +61,14 @@ public class VelocityBuffer : EffectBase
     void Reset()
     {
         _camera = GetComponent<Camera>();
+        _frustumJitter = GetComponent<FrustumJitter>();
     }
 
     void Clear()
     {
-        velocityViewMatrix = null;
+        EnsureArray(ref paramInitialized, 2);
+        paramInitialized[0] = false;
+        paramInitialized[1] = false;
     }
 
     void Awake()
@@ -72,18 +89,32 @@ public class VelocityBuffer : EffectBase
 
     void OnPostRender()
     {
-        EnsureMaterial(ref velocityMaterial, velocityShader);
+        EnsureArray(ref velocityBuffer, 2);
+        EnsureArray(ref velocityNeighborMax, 2);
 
+        EnsureArray(ref paramInitialized, 2, initialValue: false);
+        EnsureArray(ref paramProjectionExtents, 2);
+        EnsureArray(ref paramCurrV, 2);
+        EnsureArray(ref paramCurrVP, 2);
+        EnsureArray(ref paramPrevVP, 2);
+        EnsureArray(ref paramPrevVP_NoFlip, 2);
+
+        EnsureMaterial(ref velocityMaterial, velocityShader);
         if (velocityMaterial == null)
             return;
 
         timeScale = timeScaleNextFrame;
-        timeScaleNextFrame = (Time.timeScale == 0f) ? timeScaleNextFrame : Time.timeScale;
+        timeScaleNextFrame = (Time.timeScale == 0.0f) ? timeScaleNextFrame : Time.timeScale;
 
+#if SUPPORT_STEREO
+        int eyeIndex = (_camera.stereoActiveEye == Camera.MonoOrStereoscopicEye.Right) ? 1 : 0;
+#else
+        int eyeIndex = 0;
+#endif
         int bufferW = _camera.pixelWidth;
         int bufferH = _camera.pixelHeight;
 
-        if (EnsureRenderTarget(ref velocityBuffer, bufferW, bufferH, velocityFormat, FilterMode.Point, depthBits: 16))
+        if (EnsureRenderTarget(ref velocityBuffer[eyeIndex], bufferW, bufferH, velocityFormat, FilterMode.Point, depthBits: 16))
             Clear();
 
         EnsureKeyword(velocityMaterial, "CAMERA_PERSPECTIVE", !_camera.orthographic);
@@ -93,16 +124,44 @@ public class VelocityBuffer : EffectBase
         EnsureKeyword(velocityMaterial, "TILESIZE_20", neighborMaxSupport == NeighborMaxSupport.TileSize20);
         EnsureKeyword(velocityMaterial, "TILESIZE_40", neighborMaxSupport == NeighborMaxSupport.TileSize40);
 
-        Matrix4x4 cameraP = GL.GetGPUProjectionMatrix(_camera.projectionMatrix, true);
-        Matrix4x4 cameraP_NoFlip = GL.GetGPUProjectionMatrix(_camera.projectionMatrix, false);
-        Matrix4x4 cameraV = _camera.worldToCameraMatrix;
-        Matrix4x4 cameraVP = cameraP * cameraV;
+#if SUPPORT_STEREO
+        if (_camera.stereoEnabled)
+        {
+            for (int i = 0; i != 2; i++)
+            {
+                Camera.StereoscopicEye eye = (Camera.StereoscopicEye)i;
 
-        if (velocityViewMatrix == null)
-            velocityViewMatrix = cameraV;
+                Matrix4x4 currV = _camera.GetStereoViewMatrix(eye);
+                Matrix4x4 currP = GL.GetGPUProjectionMatrix(_camera.GetStereoProjectionMatrix(eye), true);
+                Matrix4x4 currP_NoFlip = GL.GetGPUProjectionMatrix(_camera.GetStereoProjectionMatrix(eye), false);
+                Matrix4x4 prevV = paramInitialized[i] ? paramCurrV[i] : currV;
+
+                paramInitialized[i] = true;
+                paramProjectionExtents[i] = _camera.GetProjectionExtents(eye);
+                paramCurrV[i] = currV;
+                paramCurrVP[i] = currP * currV;
+                paramPrevVP[i] = currP * prevV;
+                paramPrevVP_NoFlip[i] = currP_NoFlip * prevV;
+            }
+        }
+        else
+#endif
+        {
+            Matrix4x4 currV = _camera.worldToCameraMatrix;
+            Matrix4x4 currP = GL.GetGPUProjectionMatrix(_camera.projectionMatrix, true);
+            Matrix4x4 currP_NoFlip = GL.GetGPUProjectionMatrix(_camera.projectionMatrix, false);
+            Matrix4x4 prevV = paramInitialized[0] ? paramCurrV[0] : currV;
+
+            paramInitialized[0] = true;
+            paramProjectionExtents[0] = _frustumJitter.enabled ? _camera.GetProjectionExtents(_frustumJitter.activeSample.x, _frustumJitter.activeSample.y) : _camera.GetProjectionExtents();
+            paramCurrV[0] = currV;
+            paramCurrVP[0] = currP * currV;
+            paramPrevVP[0] = currP * prevV;
+            paramPrevVP_NoFlip[0] = currP_NoFlip * prevV;
+        }
 
         RenderTexture activeRT = RenderTexture.active;
-        RenderTexture.active = velocityBuffer;
+        RenderTexture.active = velocityBuffer[eyeIndex];
         {
             GL.Clear(true, true, Color.black);
 
@@ -113,16 +172,19 @@ public class VelocityBuffer : EffectBase
             const int kNeighborMax = 4;
 
             // 0: prepass
-            var jitter = GetComponent<FrustumJitter>();
-            if (jitter != null)
-                velocityMaterial.SetVector("_ProjectionExtents", _camera.GetProjectionExtents(jitter.activeSample.x, jitter.activeSample.y));
-            else
-                velocityMaterial.SetVector("_ProjectionExtents", _camera.GetProjectionExtents());
-
-            velocityMaterial.SetMatrix("_CurrV", cameraV);
-            velocityMaterial.SetMatrix("_CurrVP", cameraVP);
-            velocityMaterial.SetMatrix("_PrevVP", cameraP * velocityViewMatrix.Value);
-            velocityMaterial.SetMatrix("_PrevVP_NoFlip", cameraP_NoFlip * velocityViewMatrix.Value);
+#if SUPPORT_STEREO
+            velocityMaterial.SetVectorArray("_ProjectionExtents", paramProjectionExtents);
+            velocityMaterial.SetMatrixArray("_CurrV", paramCurrV);
+            velocityMaterial.SetMatrixArray("_CurrVP", paramCurrVP);
+            velocityMaterial.SetMatrixArray("_PrevVP", paramPrevVP);
+            velocityMaterial.SetMatrixArray("_PrevVP_NoFlip", paramPrevVP_NoFlip);
+#else
+            velocityMaterial.SetVector("_ProjectionExtents", paramProjectionExtents[0]);
+            velocityMaterial.SetMatrix("_CurrV", paramCurrV[0]);
+            velocityMaterial.SetMatrix("_CurrVP", paramCurrVP[0]);
+            velocityMaterial.SetMatrix("_PrevVP", paramPrevVP[0]);
+            velocityMaterial.SetMatrix("_PrevVP_NoFlip", paramPrevVP_NoFlip[0]);
+#endif
             velocityMaterial.SetPass(kPrepass);
             DrawFullscreenQuad();
 
@@ -170,43 +232,51 @@ public class VelocityBuffer : EffectBase
                 int neighborMaxW = bufferW / tileSize;
                 int neighborMaxH = bufferH / tileSize;
 
-                EnsureRenderTarget(ref velocityNeighborMax, neighborMaxW, neighborMaxH, velocityFormat, FilterMode.Bilinear);
+                EnsureRenderTarget(ref velocityNeighborMax[eyeIndex], neighborMaxW, neighborMaxH, velocityFormat, FilterMode.Bilinear);
 
                 // tilemax
                 RenderTexture tileMax = RenderTexture.GetTemporary(neighborMaxW, neighborMaxH, 0, velocityFormat);
                 RenderTexture.active = tileMax;
                 {
-                    velocityMaterial.SetTexture("_VelocityTex", velocityBuffer);
-                    velocityMaterial.SetVector("_VelocityTex_TexelSize", new Vector4(1f / bufferW, 1f / bufferH, 0f, 0f));
+                    velocityMaterial.SetTexture("_VelocityTex", velocityBuffer[eyeIndex]);
+                    velocityMaterial.SetVector("_VelocityTex_TexelSize", new Vector4(1.0f / bufferW, 1.0f / bufferH, 0.0f, 0.0f));
                     velocityMaterial.SetPass(kTileMax);
                     DrawFullscreenQuad();
                 }
 
                 // neighbormax
-                RenderTexture.active = velocityNeighborMax;
+                RenderTexture.active = velocityNeighborMax[eyeIndex];
                 {
                     velocityMaterial.SetTexture("_VelocityTex", tileMax);
-                    velocityMaterial.SetVector("_VelocityTex_TexelSize", new Vector4(1f / neighborMaxW, 1f / neighborMaxH, 0f, 0f));
+                    velocityMaterial.SetVector("_VelocityTex_TexelSize", new Vector4(1.0f / neighborMaxW, 1.0f / neighborMaxH, 0.0f, 0.0f));
                     velocityMaterial.SetPass(kNeighborMax);
                     DrawFullscreenQuad();
                 }
 
                 RenderTexture.ReleaseTemporary(tileMax);
             }
-            else if (velocityNeighborMax != null)
+            else
             {
-                RenderTexture.ReleaseTemporary(velocityNeighborMax);
-                velocityNeighborMax = null;
+                ReleaseRenderTarget(ref velocityNeighborMax[0]);
+                ReleaseRenderTarget(ref velocityNeighborMax[1]);
             }
         }
         RenderTexture.active = activeRT;
 
-        velocityViewMatrix = cameraV;
+        activeEyeIndex = eyeIndex;
     }
 
     void OnApplicationQuit()
     {
-        ReleaseRenderTarget(ref velocityBuffer);
-        ReleaseRenderTarget(ref velocityNeighborMax);
+        if (velocityBuffer != null)
+        {
+            ReleaseRenderTarget(ref velocityBuffer[0]);
+            ReleaseRenderTarget(ref velocityBuffer[1]);
+        }
+        if (velocityNeighborMax != null)
+        {
+            ReleaseRenderTarget(ref velocityNeighborMax[0]);
+            ReleaseRenderTarget(ref velocityNeighborMax[1]);
+        }
     }
 }
