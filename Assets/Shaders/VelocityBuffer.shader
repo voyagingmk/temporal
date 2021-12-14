@@ -10,6 +10,7 @@ Shader "Playdead/Post/VelocityBuffer"
 	#pragma only_renderers ps4 xboxone d3d11 d3d9 xbox360 opengl glcore gles3 metal vulkan
 	#pragma target 3.0
 
+	#pragma enable_d3d11_debug_symbols
 	#pragma multi_compile CAMERA_PERSPECTIVE CAMERA_ORTHOGRAPHIC
 	#pragma multi_compile __ TILESIZE_10 TILESIZE_20 TILESIZE_40
 

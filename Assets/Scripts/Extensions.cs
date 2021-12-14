@@ -2,9 +2,9 @@
 // This file is subject to the MIT License as seen in the root of this folder structure (LICENSE.TXT)
 // AUTHOR: Lasse Jon Fuglsang Pedersen <lasse@playdead.com>
 
-#if UNITY_5_5_OR_NEWER
-#define SUPPORT_STEREO
-#endif
+//#if UNITY_5_5_OR_NEWER
+//#define SUPPORT_STEREO
+//#endif
 
 using UnityEngine;
 
@@ -62,10 +62,39 @@ public static class Matrix4x4Extension
 {
     public static Matrix4x4 GetPerspectiveProjection(float left, float right, float bottom, float top, float near, float far)
     {
-        float x = (2.0f * near) / (right - left);
-        float y = (2.0f * near) / (top - bottom);
+        //float cf = camera.farClipPlane;
+        //float cn = camera.nearClipPlane;
+        //float xm = oneJitterX - oneExtentX;
+        //float xp = oneJitterX + oneExtentX;
+        //float ym = oneJitterY - oneExtentY;
+        //float yp = oneJitterY + oneExtentY;
+
+        //left = xm * cn = (oneJitterX - oneExtentX) * near
+        //right = xp * cn = (oneJitterX + oneExtentX) * near
+        //bottom = ym * cn = (oneJitterY - oneExtentY) * near
+        //top = yp * cn = (oneJitterY + oneExtentY) * near
+        //near = cn
+        //far = cf
+        // float texelSizeX = oneExtentX / (0.5f * camera.pixelWidth);
+        // float texelSizeY = oneExtentY / (0.5f * camera.pixelHeight); oneExtentY是半屏长度 所以 要乘0.5
+        // float oneJitterX = texelSizeX * texelOffsetX;
+        // float oneJitterY = texelSizeY * texelOffsetY; texelSizeY是每个像素的extent size
+        // oneExtentX = ar * tan(0.5 * fov)
+        // oneExtentY = tan(0.5 * fov)
+
+        float x = (2.0f * near) / (right - left); // (2.0f * near) / (2.0f * oneExtentX * near) = 1.0 / oneExtentX
+        float y = (2.0f * near) / (top - bottom); // (2.0f * near) / (2.0f * oneExtentY * near) = 1.0 / oneExtentY
         float a = (right + left) / (right - left);
+        // (oneJitterX * near) / (2.0f * oneExtentX * near) = (oneJitterX) / (2.0f * oneExtentX)
+        // = (oneExtentX * texelOffsetX) / (0.5f * camera.pixelWidth) / (2.0f * oneExtentX)
+        // = (oneExtentX * texelOffsetX) / ( camera.pixelWidth * oneExtentX)
+        // =  texelOffsetX / camera.pixelWidth
         float b = (top + bottom) / (top - bottom);
+        // (oneJitterY * near) / (2.0f * oneExtentY * near) = (oneJitterY) / (2.0f * oneExtentY)
+        // = (texelSizeY * texelOffsetY) / (2.0f * oneExtentY)
+        // = (oneExtentY * texelOffsetY) / (0.5f * camera.pixelHeight) / (2.0f * oneExtentY)
+        // = (oneExtentY * texelOffsetY) / (camera.pixelHeight * oneExtentY)
+        // = texelOffsetY / (camera.pixelHeight
         float c = -(far + near) / (far - near);
         float d = -(2.0f * far * near) / (far - near);
         float e = -1.0f;
